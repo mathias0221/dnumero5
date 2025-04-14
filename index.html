@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detector de Números</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .video-container {
+            position: relative;
+            margin: 20px 0;
+            width: 100%;
+            max-width: 640px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        #video {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
+
+        .controls {
+            margin: 20px 0;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #resultado {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 24px;
+            font-weight: bold;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #canvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .mensaje-error {
+            color: #ff0000;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #ffe6e6;
+            border-radius: 4px;
+            display: none;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 10px;
+            }
+            
+            button {
+                padding: 10px 20px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Detector de Números</h1>
+        
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div class="controls">
+            <button id="iniciarCamara">Abrir Cámara</button>
+            <button id="detenerCamara" disabled>Cerrar Cámara</button>
+            <button id="cambiarCamara" disabled>Cambiar Cámara</button>
+        </div>
+
+        <div id="resultado">
+            Números detectados aparecerán aquí
+        </div>
+        <div id="mensajeError" class="mensaje-error"></div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const resultado = document.getElementById('resultado');
+        const mensajeError = document.getElementById('mensajeError');
+        const btnIniciar = document.getElementById('iniciarCamara');
+        const btnDetener = document.getElementById('detenerCamara');
+        const btnCambiar = document.getElementById('cambiarCamara');
+        
+        let stream = null;
+        let procesando = false;
+        let camaraActual = 'environment';
+
+        // Verificar soporte de la API MediaDevices
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            mostrarError('Tu navegador no soporta el acceso a la cámara. Por favor, usa un navegador más moderno.');
+            btnIniciar.disabled = true;
+        }
+
+        function mostrarError(mensaje) {
+            mensajeError.textContent = mensaje;
+            mensajeError.style.display = 'block';
+            setTimeout(() => {
+                mensajeError.style.display = 'none';
+            }, 5000);
+        }
+
+        async function verificarPermisosCamara() {
+            try {
+                const result = await navigator.permissions.query({ name: 'camera' });
+                if (result.state === 'denied') {
+                    mostrarError('No se puede acceder a la cámara. Por favor, permite el acceso en la configuración de tu navegador.');
+                    return false;
+                }
+                return true;
+            } catch (error) {
+                console.log('No se puede verificar permisos:', error);
+                return true; // Continuamos de todos modos ya que algunos navegadores no soportan permissions API
+            }
+        }
+
+        async function iniciarCamara() {
+            try {
+                if (!await verificarPermisosCamara()) {
+                    return;
+                }
+
+                const constraints = {
+                    video: {
+                        facingMode: camaraActual,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                btnIniciar.disabled = true;
+                btnDetener.disabled = false;
+                btnCambiar.disabled = false;
+
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    detectarNumeros();
+                };
+
+                mensajeError.style.display = 'none';
+            } catch (error) {
+                console.error('Error al acceder a la cámara:', error);
+                if (error.name === 'NotAllowedError') {
+                    mostrarError('Acceso a la cámara denegado. Por favor, permite el acceso en la configuración de tu navegador.');
+                } else if (error.name === 'NotFoundError') {
+                    mostrarError('No se encontró ninguna cámara en tu dispositivo.');
+                } else {
+                    mostrarError('Error al acceder a la cámara: ' + error.message);
+                }
+            }
+        }
+
+        function detenerCamara() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                resultado.textContent = 'Números detectados aparecerán aquí';
+                btnIniciar.disabled = false;
+                btnDetener.disabled = true;
+                btnCambiar.disabled = true;
+            }
+        }
+
+        async function cambiarCamara() {
+            camaraActual = camaraActual === 'environment' ? 'user' : 'environment';
+            detenerCamara();
+            await iniciarCamara();
+        }
+
+        async function detectarNumeros() {
+            if (!stream || procesando) return;
+            
+            procesando = true;
+            
+            try {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                // Aquí implementaremos la detección de números usando una biblioteca más ligera
+                // Por ahora, solo mostramos el frame de video
+                
+                procesando = false;
+                if (stream) {
+                    requestAnimationFrame(detectarNumeros);
+                }
+            } catch (error) {
+                console.error('Error en la detección:', error);
+                procesando = false;
+            }
+        }
+
+        btnIniciar.addEventListener('click', iniciarCamara);
+        btnDetener.addEventListener('click', detenerCamara);
+        btnCambiar.addEventListener('click', cambiarCamara);
+
+        // Verificar permisos al cargar la página
+        window.onload = async () => {
+            await verificarPermisosCamara();
+        };
+    </script>
+</body>
+</html> 
